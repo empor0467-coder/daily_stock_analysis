@@ -25,7 +25,8 @@ import pandas as pd
 import numpy as np
 
 from src.config import get_config
-
+from src.analysis.tech_calc import full_kline_analysis
+from src.strategy.buy_price_signal import calculate_buy_zone
 logger = logging.getLogger(__name__)
 
 
