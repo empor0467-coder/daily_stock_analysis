@@ -817,7 +817,71 @@ def analyze_stock(df: pd.DataFrame, code: str) -> TrendAnalysisResult:
     analyzer = StockTrendAnalyzer()
     return analyzer.analyze(df, code)
 
+def analyze_single_stock(stock_code: str, fundamental_info: str = "", sector_info: str = "", news_info: str = "") -> str:
+    """
+    统一对外个股分析入口：整合K线数据、技术指标、分层买入价位，输出完整LLM提示词
+    :param stock_code: A股股票代码，例 603505
+    :param fundamental_info: 个股基本面文本
+    :param sector_info: 行业板块分析文本
+    :param news_info: 个股资讯、题材内容
+    :return: 拼接完整技术价位信息的prompt，可直接送入LLM生成分析报告
+    """
+    try:
+        from src.utils.kline_loader import get_stock_hfq_daily
+        from src.strategy.buy_price_signal import calculate_buy_zone
+        # 拉取120根前复权日K数据
+        df_kline = get_stock_hfq_daily(stock_code)
+        # 调用内置趋势分析器计算全套MA/MACD/RSI/量能指标
+        trend_result = analyze_stock(df_kline, stock_code)
+        trend_text = StockTrendAnalyzer().format_analysis(trend_result)
+        # 计算箱体区间、支撑位、分层买入区间
+        box_param = {
+            "box_low": round(df_kline["最低"].tail(60).min(), 2),
+            "box_high": round(df_kline["最高"].tail(60).max(), 2),
+            "ma20_support": round(trend_result.ma20, 2),
+            "current_price": round(trend_result.current_price, 2)
+        }
+        buy_zone_data = calculate_buy_zone(box_param)
+        # 组装技术分析模块文本
+        tech_content = f"""
+【K线技术诊断 + 分层买入价位规划】
+{trend_text}
 
+====分批建仓价格参考====
+当前现价：{buy_zone_data['current_price']}
+近60日震荡箱体：{buy_zone_data['box_range']}
+20日均线强支撑：{buy_zone_data['ma20_support']}
+1. 长线安全底仓区：{buy_zone_data['safe_buy_zone']}
+2. 中性加仓区间：{buy_zone_data['add_position_zone']}
+3. 短线突破追入点位：{buy_zone_data['breakout_buy_point']}
+风控止损规则：{buy_zone_data['stop_loss_rule']}
+
+交易硬性约束：严格执行回踩MA5/MA10低吸策略，禁止高乖离率追涨，优先缩量回调多头排列标的；报告必须区分长线、短线两套入场、止损、目标压力点位。
+"""
+    except Exception as err:
+        logger.warning(f"K线行情与价位计算异常: {str(err)}")
+        tech_content = "【行情接口获取失败，无K线趋势、买入价位数据】"
+
+    # 整合全部信息生成完整AI提示词
+    full_prompt = f"""
+# 股票代码
+{stock_code}
+
+# 基本面信息
+{fundamental_info}
+
+# 行业板块逻辑
+{sector_info}
+
+# 题材资讯
+{news_info}
+
+# 技术面与交易价位建议
+{tech_content}
+
+请输出完整落地股票分析报告，清晰标注各档位买入区间、止损价格、中长期压力目标位。
+"""
+    return full_prompt
 if __name__ == "__main__":
     # 测试代码
     logging.basicConfig(level=logging.INFO)
